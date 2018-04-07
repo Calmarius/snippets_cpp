@@ -58,7 +58,7 @@ private:
         {
             buf[i] = arr.buf[i];
         }
-        
+
         return 0;
     }
 
@@ -103,7 +103,7 @@ public:
     DynArray(const Alloc &alloc = Alloc()) : ator(alloc) {}
 
     // Standard stuff
-    
+
     /**
      * Destructor. Releases the memory.
      */
@@ -170,7 +170,7 @@ public:
     }
 
     // Iterators (for range based for loop)
-    
+
     /**
      * @returns an iterator to the beginning of the array.
      *
@@ -181,7 +181,7 @@ public:
      *  It's highly recommended to use range based for loops when using these iterators as it's less error prone.
      */
     T *begin() {return buf;}
-    
+
     /**
      * @returns and iterator to the end (one element beyond the end).
      *
@@ -194,7 +194,7 @@ public:
     T *end() {return buf + n;}
 
     // Operations
-    
+
     /**
      * Queries the element at the given index.
      *
@@ -214,10 +214,10 @@ public:
             lastError = INDEX_OUT_OF_RANGE;
             return *static_cast<T*>(nullptr);
         }
-        
+
         return buf[index];
     }
-    
+
     /**
      * Checks if the object is alive.
      *
@@ -261,7 +261,7 @@ public:
 
 
     /**
-     * Adds multiple elements to the dynamic array. 
+     * Adds multiple elements to the dynamic array.
      *
      * @param[in] start Iterator to the start of the range.
      * @param[in] end Iterator to the end of the range (on element beyond the last).
@@ -366,17 +366,17 @@ public:
                 return 1;
             }
         };
-        
+
         return binarySearch<Compare>(elem);
     }
-    
-    
+
+
     /**
      * @returns The number of elements that can be stored in the array without resizing.
      */
     size_t getCapacity() {return nAllocd;}
-    
-    
+
+
     /**
      * Changes the capacity of the array. (Capacity is the number of elements it can store before it needs to be reallocated).
      *
@@ -407,7 +407,7 @@ public:
         }
         buf = newBuf;
         nAllocd = newCapacity;
-        
+
         return 0;
     }
 
@@ -480,7 +480,7 @@ public:
      * @returns A new dynamic array.
      *
      * @remarks.
-     *  On failure it returns an empty array. The error reason can be found in its getLastError().
+     *  On failure it returns an empty array. For the error reason call getLastError().
      */
     template<class U, class UAlloc, class Converter> DynArray<U, UAlloc> convertAll(const Converter &c, const UAlloc &ualloc = UAlloc())
     {
@@ -488,7 +488,8 @@ public:
 
         if (newArray.setCapacity(nAllocd))
         {
-            return newArray;
+            lastError = static_cast<Error>(newArray.lastError);
+            return DynArray<U, UAlloc>();
         }
 
         for (size_t i = 0; i < n; i++)
@@ -505,8 +506,8 @@ public:
      * @returns The number of elements in the array.
      */
     size_t getCount() {return n;}
-    
-    
+
+
     /**
      * Copies the entire list to the given C array.
      *
@@ -528,7 +529,7 @@ public:
 
     /**
      * Check if an element with a given property exists in the collection.
-     * 
+     *
      * @tparam [in] Predicate A functor with the following signature: bool predicate(const T &elem) which returns true if the element matches the given condition.
      * @param[in, out] p The preficate to test.
      * @returns True if the given element is found, false otherwise.
@@ -542,8 +543,8 @@ public:
 
         return false;
     }
-    
-    
+
+
     /**
      * Finds the first element with a given property.
      *
@@ -557,11 +558,11 @@ public:
         {
             if (p(buf[i])) return &buf[i];
         }
-        
+
         return nullptr;
     }
-    
-    
+
+
     /**
      * Finds all element with a given property.
      *
@@ -570,23 +571,32 @@ public:
      * @param [in] alloc An allocator to be used for the new array.
      *
      * @returns A new array of the matches. If no matches are found an empty array is returned.
+     *      On error it returns an empty array to find out the reason call getLastError().
      */
     template <class Predicate> DynArray<T, Alloc> findAll(const Predicate &p, Alloc alloc = Alloc())
     {
         DynArray<T, Alloc> array(alloc);
-        
+
         for (size_t i = 0; i < n; i++)
         {
-            if (p(buf[i])) array.add(buf[i]);
+            if (p(buf[i]))
+            {
+                if (array.add(buf[i]))
+                {
+                    // Error adding.
+                    lastError = array.lastError;
+                    return DynArray<T, Alloc>();
+                }
+            }
         }
-        
+
         return array;
     }
-    
-    
+
+
     /**
      * Find an element in the given index range. Returns the index of the element.
-     * 
+     *
      * @tparam [in] Predicate A functor with the following signature: bool predicate(const T &elem) which returns true if the element matches the given condition.
      * @param [in] start The start index the finding starts.
      * @param [in] count The number of elements to find in.
@@ -598,24 +608,24 @@ public:
     template <class Predicate> ssize_t findIndex(size_t start, size_t count, const Predicate &p)
     {
         size_t end = start + count;
-        
+
         if ((start >= n) || (end > n))
         {
             lastError = INDEX_OUT_OF_RANGE;
-            return -1;            
+            return -1;
         }
-        
+
         for (size_t i = start; i < end; i++)
         {
             if (p(buf[i])) return i;
         }
-        
+
         return -1;
     }
 
     /**
      * Finds an element starting from the given index. Returns the index of the element.
-     * 
+     *
      * @tparam [in] Predicate A functor with the following signature: bool predicate(const T &elem) which returns true if the element matches the given condition.
      * @param [in] start The start index the finding starts.
      * @param [in] p An instance of a predicate.
@@ -630,7 +640,7 @@ public:
 
     /**
      * Find an element in the array. Returns the index of the element.
-     * 
+     *
      * @tparam [in] Predicate A functor with the following signature: bool predicate(const T &elem) which returns true if the element matches the given condition.
      * @param [in] p An instance of a predicate.
      *
@@ -638,10 +648,12 @@ public:
      */
     template <class Predicate> ssize_t findIndex(const Predicate &p)
     {
+        if (n == 0) return -1;
+
         return findIndex(0, n, p);
     }
-    
-    
+
+
     /**
      * Finds the last element with a given property.
      *
@@ -652,19 +664,19 @@ public:
     template <class Predicate> T* findLast(const Predicate &p)
     {
         size_t i = n;
-        
+
         while (i --> 0)
         {
             if (p(buf[i])) return &buf[i];
         }
-        
+
         return nullptr;
     }
-    
-    
+
+
     /**
      * Find an element in the given index range. Returns the index of the element.
-     * 
+     *
      * @tparam [in] Predicate A functor with the following signature: bool predicate(const T &elem) which returns true if the element matches the given condition.
      * @param [in] start The start index the finding starts.
      * @param [in] count The number of elements to find in.
@@ -676,27 +688,27 @@ public:
     template <class Predicate> ssize_t findLastIndex(size_t start, size_t count, const Predicate &p)
     {
         size_t end = start + count;
-        
+
         if ((start >= n) || (end > n))
         {
             lastError = INDEX_OUT_OF_RANGE;
-            return -1;            
+            return -1;
         }
-        
+
         size_t i = end;
-        
+
         while (i --> 0)
         {
             if (p(buf[i])) return i;
         }
-        
+
         return -1;
     }
 
 
     /**
      * Find an element in the range starting from the given index. Returns the index of the element.
-     * 
+     *
      * @tparam [in] Predicate A functor with the following signature: bool predicate(const T &elem) which returns true if the element matches the given condition.
      * @param [in] start The start index the finding starts.
      * @param [in] p An instance of a predicate.
@@ -712,7 +724,7 @@ public:
 
     /**
      * Find an element in the array. Returns the index of the element.
-     * 
+     *
      * @tparam [in] Predicate A functor with the following signature: bool predicate(const T &elem) which returns true if the element matches the given condition.
      * @param [in] p An instance of a predicate.
      *
@@ -720,7 +732,62 @@ public:
      */
     template <class Predicate> ssize_t findLastIndex(const Predicate &p)
     {
+        if (n == 0) return -1;
+
         return findLastIndex(0, n, p);
+    }
+
+
+    /**
+     * Performs an action on each element of the array.
+     *
+     * @tparam [in] Action A functor whose signature is: void action(T&). It represents an action that will be performed on each element in the array.
+     * @param [in] a An instance of the action functor.
+     */
+    template <class Action> void forEach(const Action &a)
+    {
+        for (size_t i = 0; i < n; i++)
+        {
+            a(buf[i]);
+        }
+    }
+
+
+    /**
+     * Returns a part of the array.
+     *
+     * @param [in] start The start index the extraction starts at.
+     * @param [in] count The count of elements to extract.
+     * @param [in] alloc An instance of the allocator to be used in the new array.
+     *
+     * @returns The new array that contains the subset of elements. The elements are copied (to avoid copy use pointers or smart pointers as T).
+     *      Or error an empty array is returned. Check getLastError() to find out the reason of the failure.
+     */
+    DynArray<T, Alloc> getRange(size_t start, size_t count, Alloc alloc = Alloc())
+    {
+        DynArray<T, Alloc> range(alloc);
+        size_t end = start + count;
+
+        if ((start >= n) || (end > n))
+        {
+            lastError = INDEX_OUT_OF_RANGE;
+            return DynArray<T, Alloc>();
+        }
+
+        if (range.setCapacity(count))
+        {
+            lastError = range.lastError;
+            return DynArray<T, Alloc>();
+        }
+
+        size_t j = 0;
+        range.n = count;
+        for (size_t i = start; i < end; i++)
+        {
+            range.buf[j++] =  buf[i];
+        }
+
+        return range;
     }
 
 
@@ -732,12 +799,12 @@ public:
     {
         Error err = lastError;
         lastError = OK;
-        
+
         return err;
     }
-    
-    
-    
+
+
+
 
 
 

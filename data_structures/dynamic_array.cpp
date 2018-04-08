@@ -16,11 +16,20 @@ struct Alloc
 template <class T>
 using List = DynArray<T, Alloc<T>>;
 
+DynArrayError theError;
+
+void errorCallback(DynArrayError error, void *context)
+{
+    theError = error;
+    (void)context;
+}
+
 int main()
 {
     List<int> dyn;
 
     assert(dyn.isAlive());
+    dyn.setErrorCb(errorCallback, nullptr);
 
     dyn.add(1);
     dyn.add(2);
@@ -42,7 +51,8 @@ int main()
     }
 
     assert(dyn2.setCapacity(1));
-    assert(dyn2.getLastError() == decltype(dyn)::INVALID_CAPACITY);
+    assert(theError == DynArrayError::INVALID_CAPACITY);
+    theError = DynArrayError::OK;
     assert(!dyn2.setCapacity(10));
     assert(dyn2.getCapacity() == 10);
 
@@ -53,18 +63,19 @@ int main()
         int &tmp = dyn[3];
 
         (void)tmp;
-        assert(dyn.getLastError() == decltype(dyn)::INDEX_OUT_OF_RANGE);
+        assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+        theError = DynArrayError::OK;
     }
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    theError = DynArrayError::OK;
 
     assert(dyn.binarySearch(1));
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    assert(theError == DynArrayError::OK);
     assert(dyn.binarySearch(2));
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    assert(theError == DynArrayError::OK);
     assert(dyn.binarySearch(3));
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    assert(theError == DynArrayError::OK);
     assert(!dyn.binarySearch(4));
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    assert(theError == DynArrayError::OK);
 
     assert(dyn.contains(1));
     assert(dyn.contains(2));
@@ -93,17 +104,11 @@ int main()
     assert(tmpArray[8] == 0);
     assert(tmpArray[9] == 0);
 
-    struct Int2Float
     {
-        float operator()(int x) {return (float)x;}
-    };
-
-    {
-        Alloc<float> ator;
-        List<float> floatList = dyn.convertAll<float>([](int x){return (float)x;}, ator);
+        List<float> floatList = dyn.convertAll<float>([](int x){return (float)x;}, Alloc<float>());
 
         assert(floatList.isAlive());
-        assert(floatList.getLastError() == decltype(floatList)::OK);
+        assert(theError == DynArrayError::OK);
         assert(floatList.getCount() == 3);
         assert(floatList[0] == 1.0);
         assert(floatList[1] == 2.0);
@@ -117,35 +122,38 @@ int main()
     assert(dyn.find([](int x){return x == 5;}) == nullptr); // There is no 5 in the array.
 
     List<int> matches1 = dyn.findAll([](int x){return x % 2;}); // All odd numbers.
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    assert(theError == DynArrayError::OK);
     assert(matches1.getCount() == 2);
     assert(matches1[0] == 1);
     assert(matches1[1] == 3);
 
     List<int> matches2 = dyn.findAll([](int x){return !(x % 2);}); // All even numbers.
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    assert(theError == DynArrayError::OK);
     assert(matches2.getCount() == 1);
     assert(matches2[0] == 2);
 
     List<int> matches3 = dyn.findAll([](int x){return x == 5;});
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    assert(theError == DynArrayError::OK);
     assert(matches3.getCount() == 0);
 
     dyn.add(4);
     dyn.add(5);
     assert(dyn.findIndex(2, 3, [](int x){return x % 2;}) == 2);
     assert(dyn.findIndex(2, 3, [](int x){return x == 6;}) == -1);
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    assert(theError == DynArrayError::OK);
     assert(dyn.findIndex(2, 4, [](int x){return x == 6;}) == -1);
-    assert(dyn.getLastError() == decltype(dyn)::INDEX_OUT_OF_RANGE);
+    assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+    theError = DynArrayError::OK;
     assert(dyn.findIndex(5, 0, [](int x){return x == 6;}) == -1);
-    assert(dyn.getLastError() == decltype(dyn)::INDEX_OUT_OF_RANGE);
+    assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+    theError = DynArrayError::OK;
 
     assert(dyn.findIndex(2, [](int x){return x % 2;}) == 2);
     assert(dyn.findIndex(2, [](int x){return x == 6;}) == -1);
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    assert(theError == DynArrayError::OK);
     assert(dyn.findIndex(5, [](int x){return x % 2;}) == -1);
-    assert(dyn.getLastError() == decltype(dyn)::INDEX_OUT_OF_RANGE);
+    assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+    theError = DynArrayError::OK;
 
     assert(dyn.findIndex([](int x){return x % 2;}) == 0);
     assert(dyn.findIndex([](int x){return !(x % 2);}) == 1);
@@ -153,36 +161,44 @@ int main()
 
     assert(dyn.findLastIndex(2, 3, [](int x){return x % 2;}) == 4);
     assert(dyn.findLastIndex(2, 3, [](int x){return x == 6;}) == -1);
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    assert(theError == DynArrayError::OK);
     assert(dyn.findLastIndex(2, 4, [](int x){return x == 6;}) == -1);
-    assert(dyn.getLastError() == decltype(dyn)::INDEX_OUT_OF_RANGE);
+    assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+    theError = DynArrayError::OK;
     assert(dyn.findLastIndex(5, 0, [](int x){return x == 6;}) == -1);
-    assert(dyn.getLastError() == decltype(dyn)::INDEX_OUT_OF_RANGE);
+    assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+    theError = DynArrayError::OK;
 
     assert(dyn.findLastIndex(2, [](int x){return x % 2;}) == 4);
     assert(dyn.findLastIndex(2, [](int x){return x == 6;}) == -1);
-    assert(dyn.getLastError() == decltype(dyn)::OK);
+    assert(theError == DynArrayError::OK);
     assert(dyn.findLastIndex(5, [](int x){return x % 2;}) == -1);
-    assert(dyn.getLastError() == decltype(dyn)::INDEX_OUT_OF_RANGE);
+    assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+    theError = DynArrayError::OK;
 
     assert(dyn.findLastIndex([](int x){return x % 2;}) == 4);
     assert(dyn.findLastIndex([](int x){return !(x % 2);}) == 3);
     assert(dyn.findLastIndex([](int){return false;}) == -1);
 
     List<int> empty;
+    empty.setErrorCb(errorCallback, nullptr);
     assert(empty.findIndex(0, 0, [](int){return true;}) == -1);
-    assert(empty.getLastError() == decltype(empty)::INDEX_OUT_OF_RANGE);
+    assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+    theError = DynArrayError::OK;
     assert(empty.findIndex(0, [](int){return true;}) == -1);
-    assert(empty.getLastError() == decltype(empty)::INDEX_OUT_OF_RANGE);
+    assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+    theError = DynArrayError::OK;
     assert(empty.findIndex([](int){return true;}) == -1);
-    assert(empty.getLastError() == decltype(empty)::OK);
+    assert(theError == DynArrayError::OK);
 
     assert(empty.findLastIndex(0, 0, [](int){return true;}) == -1);
-    assert(empty.getLastError() == decltype(empty)::INDEX_OUT_OF_RANGE);
+    assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+    theError = DynArrayError::OK;
     assert(empty.findLastIndex(0, [](int){return true;}) == -1);
-    assert(empty.getLastError() == decltype(empty)::INDEX_OUT_OF_RANGE);
+    assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+    theError = DynArrayError::OK;
     assert(empty.findLastIndex([](int){return true;}) == -1);
-    assert(empty.getLastError() == decltype(empty)::OK);
+    assert(theError == DynArrayError::OK);
 
     dyn.forEach([](int &x){x = 2*x;}); // Double every element in our test array.
     assert(dyn[0] == 2);
@@ -193,10 +209,33 @@ int main()
 
     List<int> subArray = dyn.getRange(1, 3);
     assert(subArray.getCount() == 3);
-    assert(subArray.getLastError() == decltype(subArray)::OK);
+    assert(theError == DynArrayError::OK);
     assert(subArray[0] == 4);
     assert(subArray[1] == 6);
     assert(subArray[2] == 8);
+
+    List<int> repeats;
+    repeats.setErrorCb(errorCallback, nullptr);
+
+    repeats.add(1);
+    repeats.add(2);
+    repeats.add(3);
+    repeats.add(1);
+    repeats.add(2);
+    repeats.add(3);
+    repeats.add(1);
+    repeats.add(2);
+    repeats.add(3);
+
+    assert(repeats.indexOf(1) == 0);
+    assert(theError == DynArrayError::OK);
+    assert(repeats.indexOf(1, 1) == 3);
+    assert(theError == DynArrayError::OK);
+    assert(repeats.indexOf(1, 4, 1) == -1);
+    assert(theError == DynArrayError::OK);
+    assert(repeats.indexOf(1, 8, 3) == -1);
+    assert(theError == DynArrayError::INDEX_OUT_OF_RANGE);
+    theError = DynArrayError::OK;
 
 
 

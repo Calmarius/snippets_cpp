@@ -1,5 +1,16 @@
 #include <stddef.h>
 
+/** This enum contains the possible errors in this class. */
+enum class DynArrayError
+{
+    OK, ///< Everything is alright
+    ALLOCATION_FAILURE, ///< Indicates memory allocation failure
+    INDEX_OUT_OF_RANGE, ///< Index out of range when attempted to access the array.
+    INVALID_CAPACITY ///< Wrong capacity provided when attempted to resize the object.
+};
+
+typedef void (*DynArrayErrorCallback)(DynArrayError error, void *context);
+
 /**
  * Dynamic array structure.
  *
@@ -7,21 +18,12 @@
  *
  * @tparam T The type of elements
  * @tparam Alloc The allocator to be used to allocate the elements.
+ * @tparam ErrorCb The callback that's called when an error happens.
  */
 template <class T, class Alloc>
 class DynArray
 {
     template <class X, class Y> friend class DynArray; // To make different instantiations access each other.
-
-public:
-    /** This enum contains the possible errors in this class. */
-    enum Error
-    {
-        OK, ///< Everything is alright
-        ALLOCATION_FAILURE, ///< Indicates memory allocation failure
-        INDEX_OUT_OF_RANGE, ///< Index out of range when attempted to access the array.
-        INVALID_CAPACITY ///< Wrong capacity provided when attempted to resize the object.
-    };
 
 private:
     T* buf = nullptr; ///< The buffer that holds the data.
@@ -29,8 +31,8 @@ private:
     size_t nAllocd = 0; ///< The number of elements allocated in the array.
     Alloc ator; ///< An instance of the allocator.
     bool alive = true; ///< True if the object is alive and usable;
-
-    Error lastError = OK; ///< It's set when an operation fails.
+    DynArrayErrorCallback errorCb = [](DynArrayError, void*){};
+    void *errorCbCtx = nullptr;
 
     /**
      * Constructs object from another object.
@@ -46,13 +48,14 @@ private:
         buf = ator.allocate(n);
         if (buf == nullptr)
         {
-            lastError = ALLOCATION_FAILURE;
+            errorCb(DynArrayError::ALLOCATION_FAILURE, errorCbCtx);
             alive = false;
             nAllocd = 0;
             n = 0;
             return -1;
         }
-        lastError = arr.lastError;
+        errorCb = arr.errorCb;
+        errorCbCtx = arr.errorCbCtx;
 
         for (size_t i = 0; i < n; i++)
         {
@@ -76,9 +79,10 @@ private:
         n = arr.n;
         nAllocd = arr.nAllocd;
         buf = arr.buf;
-        lastError = arr.lastError;
         ator = arr.ator;
         alive = arr.alive;
+        errorCb = arr.errorCb;
+        errorCbCtx = arr.errorCbCtx;
 
         arr.n = 0;
         arr.nAllocd = 0;
@@ -92,6 +96,31 @@ private:
     void destruct()
     {
         if (buf) ator.deallocate(buf);
+    }
+
+
+    int ensureSize(size_t newN)
+    {
+        if (nAllocd > newN) return 0;
+
+        size_t newAllocd = nAllocd;
+
+        if (newAllocd == 0) newAllocd = 8;
+
+        while (newAllocd < newN) newAllocd *= 2;
+
+        T *newBuf = ator.reallocate(buf, newAllocd);
+
+        if (!newBuf)
+        {
+            errorCb(DynArrayError::ALLOCATION_FAILURE, errorCbCtx);
+            return -1;
+        }
+
+        buf = newBuf;
+        nAllocd = newAllocd;
+
+        return 0;
     }
 public:
 
@@ -180,7 +209,10 @@ public:
      * @remarks
      *  It's highly recommended to use range based for loops when using these iterators as it's less error prone.
      */
+    // @{
+    const T *begin() const {return buf;}
     T *begin() {return buf;}
+    // @}
 
     /**
      * @returns and iterator to the end (one element beyond the end).
@@ -191,7 +223,10 @@ public:
      * @remarks
      *  It's highly recommended to use range based for loops when using these iterators as it's less error prone.
      */
+    // @{
     T *end() {return buf + n;}
+    const T *end() const {return buf + n;}
+    // @}
 
     // Operations
 
@@ -211,7 +246,7 @@ public:
     {
         if (index >= n)
         {
-            lastError = INDEX_OUT_OF_RANGE;
+            errorCb(DynArrayError::INDEX_OUT_OF_RANGE, errorCbCtx);
             return *static_cast<T*>(nullptr);
         }
 
@@ -239,21 +274,7 @@ public:
      */
     int add(const T &elem)
     {
-        if (n == nAllocd)
-        {
-            // Time to enlarge
-            size_t newSize = n != 0 ? nAllocd*2 : 8;
-            T *newBuf = ator.reallocate(buf, newSize);
-            if (!newBuf)
-            {
-                lastError = ALLOCATION_FAILURE;
-                return -1;
-            }
-
-            buf = newBuf;
-            nAllocd = newSize;
-        }
-
+        if (ensureSize(n + 1)) return -1;
         buf[n++] = elem;
 
         return 0;
@@ -305,7 +326,7 @@ public:
 
         if ((left >= n) || (right >= n))
         {
-            lastError = INDEX_OUT_OF_RANGE;
+            errorCb(DynArrayError::INDEX_OUT_OF_RANGE, errorCbCtx);
             return false;
         }
 
@@ -395,14 +416,14 @@ public:
     {
         if (newCapacity < n)
         {
-            lastError = INVALID_CAPACITY;
+            errorCb(DynArrayError::INVALID_CAPACITY, errorCbCtx);
             return -1;
         }
 
         T *newBuf = ator.reallocate(buf, newCapacity);
         if (newBuf == nullptr)
         {
-            lastError = ALLOCATION_FAILURE;
+            errorCb(DynArrayError::ALLOCATION_FAILURE, errorCbCtx);
             return -1;
         }
         buf = newBuf;
@@ -432,17 +453,19 @@ public:
     /**
      * Performs linear search to find the given element.
      *
-     * @tparam Compare A comparator. @see binarySearch<Compare>(size_t, size_t, T) for details.
+     * @tparam Compare A functor, whose signature is bool(const T&, const T&), it must return true if the two values are equal.
      * @param[in] elem The element to find.
+     * @param [in] c An instance of the comparer.
      * @returns true if the element is found.
      */
-    template <class Compare> bool contains(const T &elem)
+    template <class EqualityCompare> bool contains(const T &elem, const EqualityCompare &c)
     {
-        Compare c;
-
         for (size_t i = 0; i < n; i++)
         {
-            if (c(buf[i], elem) == 0) return true;
+            if (c(buf[i], elem))
+            {
+                return true;
+            }
         }
 
         return false;
@@ -459,12 +482,7 @@ public:
      */
     bool contains(const T &elem)
     {
-        struct Compare
-        {
-            int operator()(const T &a, const T &b) {return !(a == b);}
-        };
-
-        return contains<Compare>(elem);
+        return contains(elem, [](const T &x, const T &y){return x == y;} );
     }
 
 
@@ -486,9 +504,11 @@ public:
     {
         DynArray<U, UAlloc> newArray(ualloc);
 
+        newArray.errorCb = errorCb;
+
         if (newArray.setCapacity(nAllocd))
         {
-            lastError = static_cast<Error>(newArray.lastError);
+            errorCb(DynArrayError::ALLOCATION_FAILURE, errorCbCtx);
             return DynArray<U, UAlloc>();
         }
 
@@ -525,6 +545,12 @@ public:
             array[start + i] = buf[i];
         }
     }
+
+
+    DynArrayErrorCallback getErrorCb() {return errorCb;}
+    void* getErrorCbCtx() {return errorCbCtx;}
+    void setErrorCb(DynArrayErrorCallback ecb, void *ctx) {errorCb = ecb; errorCbCtx = ctx;}
+
 
 
     /**
@@ -577,6 +603,8 @@ public:
     {
         DynArray<T, Alloc> array(alloc);
 
+        array.errorCb = errorCb;
+
         for (size_t i = 0; i < n; i++)
         {
             if (p(buf[i]))
@@ -584,7 +612,6 @@ public:
                 if (array.add(buf[i]))
                 {
                     // Error adding.
-                    lastError = array.lastError;
                     return DynArray<T, Alloc>();
                 }
             }
@@ -611,7 +638,7 @@ public:
 
         if ((start >= n) || (end > n))
         {
-            lastError = INDEX_OUT_OF_RANGE;
+            errorCb(DynArrayError::INDEX_OUT_OF_RANGE, errorCbCtx);
             return -1;
         }
 
@@ -691,7 +718,7 @@ public:
 
         if ((start >= n) || (end > n))
         {
-            lastError = INDEX_OUT_OF_RANGE;
+            errorCb(DynArrayError::INDEX_OUT_OF_RANGE, errorCbCtx);
             return -1;
         }
 
@@ -770,13 +797,12 @@ public:
 
         if ((start >= n) || (end > n))
         {
-            lastError = INDEX_OUT_OF_RANGE;
+            errorCb(DynArrayError::INDEX_OUT_OF_RANGE, errorCbCtx);
             return DynArray<T, Alloc>();
         }
 
         if (range.setCapacity(count))
         {
-            lastError = range.lastError;
             return DynArray<T, Alloc>();
         }
 
@@ -791,17 +817,128 @@ public:
     }
 
 
+#if 0
     /**
-     * @returns The last error occured within the object since the last call to this function.
-     *      If no error occured it returns OK.
+     * Returns the index of the given element in the range.
+     *
+     * @tparam EqualityCompare a functor that decides if the two elements are equal. It's signature is: bool (const T&, const T&), it must return true if its two arguments are considered equal.
+     * @param [in] elem The element to find.
+     * @param [in] index The start index where the search starts.
+     * @param [in] count The number of elements to scan.
+     * @param [in] c An instance of the comparator.
+     * @returns The index of the element if it's found. -1 if not found.
+     *      On an index out of range condition it returns -1 and sets the last error to INDEX_OUT_OF_RANGE.
      */
-    Error getLastError()
+    template <class EqualityCompare> ssize_t indexOf(const T &elem, size_t index, size_t count, const EqualityCompare &c)
     {
-        Error err = lastError;
-        lastError = OK;
+        size_t end = index + count;
 
-        return err;
+        if ((index >= n) || (end > n))
+        {
+            lastError = INDEX_OUT_OF_RANGE;
+            return -1;
+        }
+
+        for (size_t i = index; i < end; i++)
+        {
+            if (c(buf[i], elem)) return i;
+        }
+
+        return -1;
     }
+
+
+    /**
+     * Returns the index of the given element starting from the given index.
+     *
+     * @tparam EqualityCompare a functor that decides if the two elements are equal. It's signature is: bool (const T&, const T&), it must return true if its two arguments are considered equal.
+     * @param [in] elem The element to find.
+     * @param [in] index The start index where the search starts.
+     * @param [in] c An instance of the comparator.
+     * @returns The index of the element if it's found. -1 if not found.
+     *      On an index out of range condition it returns -1 and sets the last error to INDEX_OUT_OF_RANGE.
+     */
+    template <class EqualityCompare> ssize_t indexOf(const T &elem, size_t index, const EqualityCompare &c)
+    {
+        return indexOf(elem, index, n - index, c);
+    }
+
+
+    /**
+     * Returns the index of the given element in that array.
+     *
+     * @tparam EqualityCompare a functor that decides if the two elements are equal. It's signature is: bool (const T&, const T&), it must return true if its two arguments are considered equal.
+     * @param [in] c An instance of the comparator.
+     * @returns The index of the element if it's found. -1 if not found.
+     *      On an index out of range condition it returns -1 and sets the last error to INDEX_OUT_OF_RANGE.
+     */
+    template <class EqualityCompare> ssize_t indexOf(const T &elem, const EqualityCompare &c)
+    {
+        return indexOf(elem, 0, n, c);
+    }
+#endif
+
+    /**
+     * Returns the index of the given element in the range.
+     *
+     * @param [in] elem The element to find.
+     * @param [in] index The start index where the search starts.
+     * @param [in] count The number of elements to scan.
+     * @returns The index of the element if it's found. -1 if not found.
+     *      On an index out of range condition it returns -1 and sets the last error to INDEX_OUT_OF_RANGE.
+     *
+     * @remarks T must support the operator ==.
+     */
+    ssize_t indexOf(const T &elem, size_t index, size_t count)
+    {
+        size_t end = index + count;
+
+        if ((index >= n) || (end > n))
+        {
+            errorCb(DynArrayError::INDEX_OUT_OF_RANGE, errorCbCtx);
+            return -1;
+        }
+
+        for (size_t i = index; i < end; i++)
+        {
+            if (buf[i] == elem) return i;
+        }
+
+        return -1;
+        //return indexOf(elem, index, count, [](const T &x, const T &y){return x == y;});
+    }
+
+
+    /**
+     * Returns the index of the given element starting at the given index.
+     *
+     * @param [in] elem The element to find.
+     * @param [in] index The start index where the search starts.
+     * @returns The index of the element if it's found. -1 if not found.
+     *      On an index out of range condition it returns -1 and sets the last error to INDEX_OUT_OF_RANGE.
+     *
+     * @remarks T must support the operator ==.
+     */
+    ssize_t indexOf(const T &elem, size_t index)
+    {
+        return indexOf(elem, index, n - index);
+    }
+
+
+    /**
+     * Returns the index of the given element starting at the given index.
+     *
+     * @param [in] elem The element to find.
+     * @returns The index of the element if it's found. -1 if not found.
+     *      On an index out of range condition it returns -1 and sets the last error to INDEX_OUT_OF_RANGE.
+     *
+     * @remarks T must support the operator ==.
+     */
+    ssize_t indexOf(const T &elem)
+    {
+        return indexOf(elem, 0, n);
+    }
+
 
 
 
